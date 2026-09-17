@@ -1,14 +1,20 @@
 name: Post daily briefing to Instagram
 
 on:
+  # 正式排程:GitHub Actions 自己每天固定時間去讀信、拉資料(不再依賴 Claude session
+  # 對外呼叫)。17:10 UTC = 01:10 台北,晚於 Claude 排程任務讀信、寄信回自己信箱的
+  # 時間(01:00),確保信已經在信箱裡。
+  schedule:
+    - cron: "10 17 * * *"
+  # 保留:緊急補發/測試用,Claude 那邊如果哪天又要主動觸發還是可以用
   repository_dispatch:
     types: [post_briefing]
   # 方便手動測試:去 repo 的 Actions 頁籤按 "Run workflow"
   workflow_dispatch:
     inputs:
       payload_json:
-        description: "測試用 payload(貼上完整 JSON 字串)"
-        required: true
+        description: "測試用 payload(貼上完整 JSON 字串,留空則跟 schedule 一樣去讀信)"
+        required: false
 
 permissions:
   contents: write
@@ -30,7 +36,19 @@ jobs:
           pip install -r requirements.txt
           playwright install --with-deps chromium
 
-      - name: Write payload.json
+      - name: Fetch payload from Gmail
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          GMAIL_SELF_ADDRESS: ${{ secrets.GMAIL_SELF_ADDRESS }}
+        run: |
+          python3 scripts/fetch_briefing_email.py --out payload.json
+          cat payload.json
+
+      - name: Write payload.json from manual/dispatch input
+        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}

@@ -1,6 +1,8 @@
 # 貼到 Project → Scheduled → New task 的指令
 
-建議排程時間：每天 01:00(晚於信件寄出時間 00:35,確保信已經在信箱裡)
+建議排程時間：每天 01:00(晚於原始信件寄出時間 00:35,確保信已經在信箱裡)。
+這個任務只負責讀信+寄信回自己信箱,不對外發任何 API request;GitHub Actions
+那邊排 01:10 自己去讀信,見 `.github/workflows/post-to-ig.yml`。
 
 ---
 
@@ -28,27 +30,21 @@
 }
 ```
 
-3. 用這組 JSON 當 `client_payload`，呼叫下面這個 API 觸發 GitHub Actions：
+3. 寄一封信回我自己的信箱（收件者跟寄件者都是我自己的 Gmail），格式如下：
 
-```
-POST https://api.github.com/repos/<我的帳號>/<repo名稱>/dispatches
-Headers:
-  Accept: application/vnd.github+json
-  Authorization: Bearer <GitHub token>
-Body:
-  {
-    "event_type": "post_briefing",
-    "client_payload": <上面整理好的 JSON>
-  }
-```
+   - 主旨務必完全是：`IG_BRIEFING_PAYLOAD {今天日期,格式 YYYY-MM-DD}`
+     （例如 `IG_BRIEFING_PAYLOAD 2026-09-17`），日期不要用全形或其他格式，
+     GitHub Actions 那邊會照這個格式去搜信。
+   - 內文（純文字，不要用 HTML 信、不要加任何說明文字、不要用 ``` 包起來）
+     就是上面整理好的那包 JSON，一個字不多、一個字不少。
 
-   （GitHub token 我會在設定這個排程任務時另外提供，不要用其他來源的 token。）
-
-4. 呼叫完成後，回報：今天有沒有找到信、整理出的 JSON 內容、API 呼叫的結果
-   （成功回傳的 status code，或失敗的錯誤訊息）。不要自己重試超過一次；如果
-   失敗，把錯誤訊息完整貼出來讓我自己判斷。
+4. 寄信完成後，回報：今天有沒有找到信、整理出的 JSON 內容、信件寄出的結果
+   （成功或失敗訊息）。不要自己重試超過一次；如果失敗，把錯誤訊息完整貼出來
+   讓我自己判斷。
 
 ---
 
-**注意**：這個任務只負責「讀信 + 整理資料 + 觸發」，不要嘗試自己呼叫 Instagram
-或 Meta 的 API — 那一段是 GitHub Actions 負責的。
+**注意**：這個任務只負責「讀信 + 整理資料 + 寄信回自己信箱」，不要呼叫任何
+GitHub API，也不要嘗試自己呼叫 Instagram 或 Meta 的 API — 那些都是 GitHub
+Actions 負責的：它會在每天固定時間自己用 Gmail API 讀取這封信、解析 JSON、
+接著跑渲染圖卡 + 發布 IG 的流程。

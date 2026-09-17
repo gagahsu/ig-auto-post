@@ -5,6 +5,8 @@
 .github/workflows/post-to-ig.yml   ← GitHub Actions workflow
 scripts/render_card.py             ← 把資料套進模板，渲染成 PNG
 scripts/publish_ig.py              ← 呼叫 Meta Graph API 發布
+scripts/fetch_briefing_email.py    ← 用 Gmail API 讀當天的 payload 信,解析成 payload.json
+scripts/gmail_get_refresh_token.py ← 一次性本機工具,取得 Gmail OAuth2 refresh token
 templates/card_template.html       ← 圖卡的 HTML/CSS 模板(1080x1350)
 payload.example.json               ← 測試用範例資料
 requirements.txt
@@ -23,18 +25,42 @@ Repo → Settings → Secrets and variables → Actions → New repository secre
 |---|---|
 | `IG_ACCESS_TOKEN` | Meta long-lived access token，要有 `instagram_content_publish` 權限 |
 | `IG_BUSINESS_ACCOUNT_ID` | 你的 IG 專業帳號 ID |
+| `GMAIL_CLIENT_ID` | Google OAuth2 client id(見下方步驟 3) |
+| `GMAIL_CLIENT_SECRET` | Google OAuth2 client secret |
+| `GMAIL_REFRESH_TOKEN` | 一次性本機授權拿到的 refresh token |
+| `GMAIL_SELF_ADDRESS` | 自己的 Gmail 地址(Claude 排程任務寄信的收件者) |
 
-拿 token 的步驟：Meta for Developers → 建立 App → 加 Instagram Graph API 產品 →
+拿 IG token 的步驟：Meta for Developers → 建立 App → 加 Instagram Graph API 產品 →
 串接你的 IG 專業帳號（必須是商業/創作者帳號，且連結一個 FB 粉專）→ 產生
 long-lived token（約 60 天效期，記得排一個提醒到期前換新）。
 
-### 3. 準備一個能觸發 workflow 的 GitHub Token（給 Project 排程任務用）
-在你的 GitHub 帳號設定一個 fine-grained personal access token，權限只給
-`Contents: Read and write` + `Actions: Read and write`，範圍限定這個 repo。
-這個 token 會被 Project 的排程任務用來呼叫 `repository_dispatch`，**不要**設成
-GitHub Secrets（那是給 workflow 內部用的），而是給 Claude Project 那邊的排程
-任務使用（設定方式看它的介面，通常是連結一個 Credential 或直接放進任務指令
-情境裡，依 Claude 產品當下版本為準）。
+### 3. 讓 GitHub Actions 自己能讀 Gmail(取代原本 Claude 主動呼叫 GitHub API 的做法)
+
+因為 Claude 排程任務對外呼叫常常被網路限制擋掉，流程改成「GitHub 主動來拉」：
+
+1. Claude 排程任務讀完 Gmail、整理好 JSON 後，**寄一封信回自己的信箱**（不再
+   呼叫 GitHub API，見 `project-scheduled-task-prompt.md`）。
+2. GitHub Actions 改成用 `schedule:` cron 每天自己醒來，跑
+   `scripts/fetch_briefing_email.py`，用 Gmail API 去讀那封信、解析出 JSON，
+   再接續原本渲染圖卡 + 發布 IG 的流程。
+
+個人 Gmail（非 Workspace）沒有 service account + domain-wide delegation 可用，
+所以用 OAuth2 refresh token：
+
+1. Google Cloud Console 開一個 project，啟用 **Gmail API**。
+2. OAuth consent screen 選 External + Testing 模式，把自己的信箱加進 test
+   users（不用送審，測試模式的 refresh token 不會過期，只要別把 App 改成
+   Production 就好）。
+3. Credentials → Create OAuth client ID → Application type 選 **Desktop app**，
+   下載 `client_secret.json`。
+4. 本機跑一次：
+   ```bash
+   pip install google-auth-oauthlib
+   python3 scripts/gmail_get_refresh_token.py --client-secret client_secret.json
+   ```
+   瀏覽器會跳出來要你登入同意，完成後 terminal 會印出
+   `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN`，把這三個
+   加上 `GMAIL_SELF_ADDRESS`（你的 Gmail 地址）一起存進上面表格的 repo secrets。
 
 ## 本機測試（不需要等排程，先確認整條 pipeline 會動）
 
@@ -52,20 +78,17 @@ python3 scripts/render_card.py --payload payload.example.json --out output/card.
 Repo → Actions → "Post daily briefing to Instagram" → Run workflow →
 把 `payload.example.json` 的內容整個貼進 `payload_json` 欄位 → Run。
 
-## 正式串接：用 repository_dispatch 觸發
+## 正式串接：schedule cron 自動拉信
 
-Project 排程任務讀完 Gmail、整理好資料後，呼叫：
+不需要手動做什麼，`.github/workflows/post-to-ig.yml` 裡的 `schedule: cron:
+"10 17 * * *"`（17:10 UTC = 01:10 台北）每天會自動觸發，自己跑
+`fetch_briefing_email.py` 去讀 Claude 排程任務寄的那封信。前提是上面「一次性
+設定」的 Gmail secrets 都設好、且 Claude 那邊的排程任務有照
+`project-scheduled-task-prompt.md` 的指示把 JSON 寄回自己信箱。
 
-```bash
-curl -X POST \
-  -H "Accept: application/vnd.github+json" \
-  -H "Authorization: Bearer <你的 fine-grained GitHub token>" \
-  https://api.github.com/repos/<你的帳號>/<repo名稱>/dispatches \
-  -d '{
-    "event_type": "post_briefing",
-    "client_payload": { ...按照 payload.example.json 的格式帶入當天資料... }
-  }'
-```
+`repository_dispatch`（`event_type: post_briefing`）觸發路徑還留著，當作緊急
+補發或測試用；`workflow_dispatch` 手動觸發時如果 `payload_json` 留空，也會走
+跟 schedule 一樣的「去讀信」路徑，方便直接測整條讀信流程。
 
 ## 已知限制 / 之後可以改進的地方
 
@@ -78,3 +101,6 @@ curl -X POST \
   但仍需另外設定一組有 `Secrets: Read and write` 權限的 `GH_PAT_FOR_SECRETS`。
 - IG API 沒有編輯貼文的端點，發錯只能刪除重發，所以正式使用前務必先用
   `workflow_dispatch` 手動測過幾次。
+- Gmail OAuth consent screen 停留在 Testing 模式的 refresh token 理論上不會過期，
+  但如果哪天手動把 App 改成 Production 或撤銷過權限，`GMAIL_REFRESH_TOKEN` 就會
+  失效，需要重跑一次 `gmail_get_refresh_token.py`。
