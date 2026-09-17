@@ -81,7 +81,7 @@ Repo → Actions → "Post daily briefing to Instagram" → Run workflow →
 ## 正式串接：schedule cron 自動拉信
 
 不需要手動做什麼，`.github/workflows/post-to-ig.yml` 裡的 `schedule: cron:
-"10 17 * * *"`（17:10 UTC = 01:10 台北）每天會自動觸發，自己跑
+"5 0 * * *"`（00:05 UTC = 08:05 台北）每天會自動觸發，自己跑
 `fetch_briefing_email.py` 去讀 Claude 排程任務寄的那封信。前提是上面「一次性
 設定」的 Gmail secrets 都設好、且 Claude 那邊的排程任務有照
 `project-scheduled-task-prompt.md` 的指示把 JSON 寄回自己信箱。

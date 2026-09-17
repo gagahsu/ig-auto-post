@@ -2,10 +2,10 @@ name: Post daily briefing to Instagram
 
 on:
   # 正式排程:GitHub Actions 自己每天固定時間去讀信、拉資料(不再依賴 Claude session
-  # 對外呼叫)。17:10 UTC = 01:10 台北,晚於 Claude 排程任務讀信、寄信回自己信箱的
+  # 對外呼叫)。00:05 UTC = 08:05 台北,晚於 Claude 排程任務讀信、寄信回自己信箱的
   # 時間(01:00),確保信已經在信箱裡。
   schedule:
-    - cron: "10 17 * * *"
+    - cron: "5 0 * * *"
   # 保留:緊急補發/測試用,Claude 那邊如果哪天又要主動觸發還是可以用
   repository_dispatch:
     types: [post_briefing]
