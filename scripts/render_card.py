@@ -48,6 +48,40 @@ def render_html(data: dict, template_name: str) -> str:
     return template.render(**data)
 
 
+# 內文長度每天都不一樣(新聞則數、族群清單長短...),固定字級版面很容易爆版。
+# 套用 .fit-text class 的區塊,在真的塞不下時自動一起等比縮小字級/行距,
+# 縮到 MIN_FIT_SCALE 還塞不下就放棄,印警告但照樣輸出(比整批失敗好處理)。
+MIN_FIT_SCALE = 0.55
+
+AUTOFIT_JS = """
+(minScale) => {
+  const card = document.querySelector('.card');
+  const targets = Array.from(document.querySelectorAll('.fit-text'));
+  const available = card.clientHeight;
+
+  targets.forEach(el => {
+    if (!el.dataset.baseFont) {
+      el.dataset.baseFont = parseFloat(getComputedStyle(el).fontSize);
+      el.dataset.baseMarginBottom = parseFloat(getComputedStyle(el).marginBottom) || 0;
+    }
+  });
+
+  let scale = 1.0;
+  let guard = 0;
+  while (card.scrollHeight > available && scale > minScale && guard < 90) {
+    scale = Math.max(minScale, scale - 0.01);
+    targets.forEach(el => {
+      el.style.fontSize = (el.dataset.baseFont * scale) + 'px';
+      el.style.marginBottom = (el.dataset.baseMarginBottom * scale) + 'px';
+    });
+    guard++;
+  }
+
+  return { scale, fits: card.scrollHeight <= available, scrollHeight: card.scrollHeight, available };
+}
+"""
+
+
 def html_to_png(html: str, out_path: str):
     out_dir = pathlib.Path(out_path).parent
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -59,6 +93,16 @@ def html_to_png(html: str, out_path: str):
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1080, "height": 1350})
         page.goto(f"file://{tmp_html.resolve()}")
+
+        result = page.evaluate(AUTOFIT_JS, MIN_FIT_SCALE)
+        if not result["fits"]:
+            print(
+                f"警告:內容過長,字級縮到 {result['scale']:.2f} 倍(下限)還是塞不下"
+                f"(內容高度 {result['scrollHeight']}px > 可用 {result['available']}px),"
+                f"圖卡底部可能還是被裁切,建議精簡文案。",
+                file=sys.stderr,
+            )
+
         page.screenshot(path=out_path)
         browser.close()
 
