@@ -1,0 +1,159 @@
+name: Post company intro card to Instagram
+
+on:
+  # 這條 track 沒有固定每日排程(公司介紹卡不是每天發),觸發方式只有手動/dispatch。
+  # 之後如果要固定排程,在這裡加 schedule 區塊即可,跟另外兩條 track 一樣。
+  repository_dispatch:
+    types: [post_company]
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: "測試用 deck.json(貼上完整 JSON 字串,留空則去讀信)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  render-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+          # card.html 用 "Noto Sans CJK TC",playwright install --with-deps 不保證裝這套字,
+          # 沒裝的話中文會 fallback 成系統預設字型,版面跟本機預覽不一致。
+          sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+
+      - name: Fetch payload from Gmail
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == ''
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          GMAIL_SELF_ADDRESS: ${{ secrets.GMAIL_SELF_ADDRESS }}
+        run: |
+          python3 scripts/fetch_briefing_email.py --out deck.json --subject-prefix IG_COMPANY_PAYLOAD
+          cat deck.json
+
+      - name: Write deck.json from manual/dispatch input
+        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "$MANUAL_PAYLOAD" > deck.json
+          else
+            echo "$DISPATCH_PAYLOAD" > deck.json
+          fi
+          cat deck.json
+
+      - name: Render carousel slides
+        run: |
+          python3 scripts/render_company_card.py --deck deck.json --out-dir output \
+            --template templates/company_card.html
+
+      - name: Commit images to repo
+        id: commit_image
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          mkdir -p assets
+          TS=$(date +%Y%m%d-%H%M%S)
+          i=1
+          for f in output/slide-*.png; do
+            cp "$f" "assets/company-card-$TS-$i.png"
+            i=$((i + 1))
+          done
+          git add assets/
+          git commit -m "chore: add company intro IG card $(date +%Y-%m-%d)"
+          git push
+
+      - name: Resolve public URLs via jsDelivr and wait for CDN propagation
+        id: image_url
+        run: |
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+          FILE_PATHS=$(git diff --name-only HEAD~1 HEAD | grep assets/)
+
+          URLS=""
+          PATHS_OUT=""
+          for FILE_PATH in $FILE_PATHS; do
+            JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}"
+            curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
+
+            READY=0
+            for i in $(seq 1 20); do
+              STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$JSDELIVR_URL")
+              if [ "$STATUS" = "200" ]; then
+                echo "jsDelivr ready for $FILE_PATH after $((i * 5))s"
+                READY=1
+                break
+              fi
+              echo "attempt $i for $FILE_PATH: status $STATUS, retrying in 5s..."
+              sleep 5
+            done
+            if [ "$READY" != "1" ]; then
+              echo "jsDelivr never returned 200 for $FILE_PATH within 100s, giving up" >&2
+              exit 1
+            fi
+
+            URLS="$URLS$JSDELIVR_URL"$'\n'
+            PATHS_OUT="$PATHS_OUT$FILE_PATH"$'\n'
+          done
+
+          {
+            echo "urls<<EOF"
+            printf '%s' "$URLS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "file_paths<<EOF"
+            printf '%s' "$PATHS_OUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Extract caption from deck.json
+        id: caption
+        run: |
+          CAPTION=$(python3 -c "import json;print(json.load(open('deck.json')).get('caption',''))")
+          {
+            echo "text<<EOF"
+            echo "$CAPTION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish carousel to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+        run: |
+          IMAGE_ARGS=()
+          while IFS= read -r url; do
+            [ -n "$url" ] && IMAGE_ARGS+=(--image-url "$url")
+          done <<< "${{ steps.image_url.outputs.urls }}"
+
+          python3 scripts/publish_ig.py "${IMAGE_ARGS[@]}" \
+            --caption "${{ steps.caption.outputs.text }}"
+
+      - name: Remove published cards from assets/
+        if: success()
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          while IFS= read -r FILE_PATH; do
+            [ -n "$FILE_PATH" ] && git rm "$FILE_PATH"
+          done <<< "${{ steps.image_url.outputs.file_paths }}"
+          git commit -m "chore: remove published company intro IG card $(date +%Y-%m-%d)"
+          git pull --rebase
+          git push

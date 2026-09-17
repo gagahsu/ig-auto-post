@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg-outer: #EDE7DC;
+    --paper: #FCF9F2;
+    --ink: #232724;
+    --ink-soft: #6b6a60;
+    --red: #DC2626;
+    --green: #059669;
+    --yellow: #FEF08A;
+    --yellow-deep: #FDE047;
+    --white: #FFFFFF;
+    --line-dash: rgba(35,39,36,0.32);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body {
+    width:1080px; height:1350px;
+    background: var(--bg-outer);
+    font-family: "Noto Sans CJK TC","Noto Sans CJK TC Black",sans-serif;
+    color: var(--ink);
+    overflow:hidden;
+  }
+  .card {
+    position:absolute; top:40px; left:40px; right:40px; bottom:40px;
+    background: var(--paper);
+    border: 6px solid var(--ink);
+    border-radius: 40px;
+    box-shadow: 12px 14px 0 var(--ink);
+    display:flex; flex-direction:column;
+    padding: 56px 64px 40px 64px;
+  }
+
+  .top-row {
+    display:flex; align-items:center; justify-content:space-between;
+    padding-bottom:22px; border-bottom:2px dashed var(--line-dash);
+  }
+  .brand { display:flex; align-items:center; gap:16px; }
+  .brand-badge {
+    width:56px; height:56px; border-radius:50%;
+    background: var(--yellow); border:3px solid var(--ink);
+    display:flex; align-items:center; justify-content:center;
+    font-size:26px; font-weight:900; color:var(--ink);
+  }
+  .brand-name { font-size:26px; font-weight:900; letter-spacing:0.5px; color: var(--ink); }
+  .brand-sub { font-size:16px; color: var(--ink-soft); margin-top:2px; }
+  .ticker {
+    font-size:19px; color: var(--ink); font-weight:800;
+    background: var(--white); border:2.5px solid var(--ink);
+    padding:8px 20px; border-radius:999px;
+  }
+
+  .tag {
+    display:inline-flex; align-items:center; gap:10px;
+    background: var(--yellow); color:var(--ink);
+    font-size:23px; font-weight:900;
+    padding: 9px 26px 11px 26px; border-radius: 10px 10px 10px 0;
+    margin-top: 40px; margin-bottom: 30px;
+    width: fit-content; border: 3px solid var(--ink);
+    box-shadow: 5px 6px 0 var(--ink);
+    position:relative; z-index:2;
+  }
+
+  .headline {
+    font-size: 56px; font-weight:900; line-height:1.32;
+    color: var(--ink); position:relative; z-index:2;
+    max-width: 900px;
+  }
+  .headline .accent { color: var(--red); }
+
+  .subline {
+    margin-top:22px; font-size:25px; color: var(--ink-soft);
+    line-height:1.6; max-width: 880px; position:relative; z-index:2;
+  }
+
+  .industry-tag {
+    display:inline-flex; align-items:center; gap:8px;
+    margin-top:20px; font-size:18px; color: var(--ink);
+    background: var(--white); border:2px solid var(--ink);
+    padding:8px 20px; border-radius:999px; width:fit-content;
+    position:relative; z-index:2;
+  }
+
+  .body { margin-top: 20px; position:relative; z-index:2; flex:1; }
+  .paragraph { font-size: 28px; line-height:1.85; color: var(--ink); }
+  .paragraph + .paragraph { margin-top: 26px; }
+
+  ul.bullets { list-style:none; }
+  ul.bullets li {
+    font-size: 28px; line-height:1.7; color: var(--ink);
+    padding-left: 40px; position:relative; margin-bottom: 24px;
+  }
+  ul.bullets li::before {
+    content:""; position:absolute; left:0; top:14px;
+    width:14px; height:14px; background:var(--red); border:2px solid var(--ink); border-radius:3px;
+  }
+  ul.bullets li b { color: var(--red); }
+
+  .section-block { margin-bottom: 36px; }
+  .section-title {
+    font-size: 30px; font-weight:900; color: var(--ink);
+    margin-bottom: 14px; padding-bottom:10px; border-bottom: 2px dashed var(--line-dash);
+  }
+  .section-block ul.bullets li { font-size:25px; margin-bottom:16px; }
+
+  .competitor-summary { font-size:24px; color:var(--ink-soft); line-height:1.6; margin-bottom:22px; }
+  .competitor-list { display:flex; flex-direction:column; gap:16px; }
+  .competitor-item {
+    display:flex; align-items:flex-start; gap:20px;
+    background: var(--white); border:2px solid var(--ink);
+    border-radius:16px; padding:20px 24px;
+  }
+  .competitor-region {
+    flex-shrink:0; font-size:17px; font-weight:900; color:var(--ink);
+    background:var(--yellow); border:2px solid var(--ink);
+    padding:6px 16px; border-radius:999px; white-space:nowrap;
+  }
+  .competitor-name { font-size:26px; font-weight:900; color:var(--ink); }
+  .competitor-note { font-size:19px; color:var(--ink-soft); margin-top:6px; line-height:1.55; }
+
+  .chart-wrap {
+    margin-top: 10px; background: var(--white);
+    border:2px solid var(--ink); border-radius: 18px; padding: 16px 22px;
+    position:relative; z-index:2;
+  }
+  .chart-wrap img { width:100%; display:block; }
+  .stat-row { display:flex; gap:16px; margin-top:16px; }
+  .stat-box {
+    flex:1; background: var(--white); border:2px solid var(--ink);
+    border-radius:14px; padding:14px 16px; text-align:center;
+  }
+  .stat-box .stat-label { font-size:16px; color:var(--ink-soft); }
+  .stat-box .stat-value { font-size:26px; font-weight:900; color:var(--red); margin-top:4px; }
+
+  /* financial-card bullets need to be more compact than product bullets, but match the outlook (section) font size */
+  ul.bullets.bullets-compact { margin-top: 16px; }
+  ul.bullets.bullets-compact li { font-size:24px; line-height:1.55; margin-bottom:14px; padding-left:34px; }
+  ul.bullets.bullets-compact li::before { width:12px; height:12px; top:8px; }
+
+  .footer { margin-top:auto; display:flex; align-items:center; justify-content:space-between; position:relative; z-index:2; padding-top:18px; }
+  .footer .page-idx { font-size:18px; color: var(--ink-soft); letter-spacing:2px; font-weight:700; }
+  .footer .src-note { font-size:16px; color: var(--ink-soft); }
+
+  /* cover-specific */
+  .cover .headline { font-size: 66px; margin-top: 8px; }
+  .cover-icon { position:absolute; right:56px; bottom:110px; font-size:210px; opacity:0.14; z-index:1; }
+
+  /* cta-specific */
+  .cta-wrap {
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; position:relative; z-index:2;
+    background: var(--yellow); border:3px solid var(--ink); border-radius:24px;
+    box-shadow: 7px 8px 0 var(--ink); padding: 60px 40px; margin-top:10px;
+  }
+  .cta-wrap .cta-title { font-size:44px; font-weight:900; color:var(--ink); }
+  .cta-wrap .cta-title .accent { color:var(--red); }
+  .cta-icons { display:flex; align-items:center; gap:44px; margin-top:44px; }
+  .cta-icons svg { width:50px; height:50px; stroke:var(--ink); }
+</style>
+</head>
+<body>
+  <div class="card {{VARIANT_CLASS}}">
+    <div class="top-row">
+      <div class="brand">
+        <div class="brand-badge">{{BRAND_INITIAL}}</div>
+        <div>
+          <div class="brand-name">{{BRAND_NAME}}</div>
+          <div class="brand-sub">{{BRAND_SUB}}</div>
+        </div>
+      </div>
+      <div class="ticker">{{TICKER}}</div>
+    </div>
+
+    {{BODY}}
+
+    <div class="footer">
+      <div class="page-idx">{{PAGE_IDX}}</div>
+      <div class="src-note">{{SRC_NOTE}}</div>
+    </div>
+  </div>
+</body>
+</html>
