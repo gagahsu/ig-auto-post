@@ -17,7 +17,7 @@ import time
 import requests
 
 GRAPH_API_VERSION = "v21.0"
-GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
+GRAPH_BASE = f"https://graph.instagram.com/{GRAPH_API_VERSION}"
 
 
 def get_env(name: str) -> str:
@@ -82,7 +82,7 @@ def main():
     ig_user_id = get_env("IG_BUSINESS_ACCOUNT_ID")
 
     # 不印出完整 token,只印長度跟開頭幾個字,方便判斷是不是貼錯格式
-    # (正常的 long-lived user token 開頭通常是 "EAA")
+    # (Instagram API with Instagram Login 的 long-lived token 開頭通常是 "IGAA")
     print(f"token 長度={len(token)}, 開頭={token[:6]!r}", file=sys.stderr)
     if token.startswith("{") or token.startswith('"'):
         print(
