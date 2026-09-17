@@ -1,8 +1,9 @@
 name: Post company intro card to Instagram
 
 on:
-  # 這條 track 沒有固定每日排程(公司介紹卡不是每天發),觸發方式只有手動/dispatch。
-  # 之後如果要固定排程,在這裡加 schedule 區塊即可,跟另外兩條 track 一樣。
+  # 台北 11:30 = UTC 03:30。
+  schedule:
+    - cron: "30 3 * * *"
   repository_dispatch:
     types: [post_company]
   workflow_dispatch:
@@ -35,7 +36,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
 
       - name: Fetch payload from Gmail
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == ''
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
         env:
           GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
