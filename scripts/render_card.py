@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-把 payload.json 套進 templates/card_template.html,渲染成 1080x1350 的 PNG。
+把 payload.json 套進 templates/ 底下的模板,渲染成 1080x1350 的 PNG 輪播(carousel)。
+每個 --template 對應輪播裡的一張,依序輸出成 <out-dir>/slide-1.png、slide-2.png...
 
 用法:
-    python3 render_card.py --payload payload.json --out output/card.png
+    python3 render_card.py --payload payload.json --out-dir output \
+        --template card_template_1.html --template card_template_2.html
 """
 import argparse
 import json
@@ -82,48 +84,55 @@ AUTOFIT_JS = """
 """
 
 
-def html_to_png(html: str, out_path: str):
-    out_dir = pathlib.Path(out_path).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
+def html_to_png(page, html: str, tmp_html_path: pathlib.Path, out_path: str):
+    tmp_html_path.write_text(html, encoding="utf-8")
+    page.goto(f"file://{tmp_html_path.resolve()}")
 
-    tmp_html = out_dir / "_card_tmp.html"
-    tmp_html.write_text(html, encoding="utf-8")
+    result = page.evaluate(AUTOFIT_JS, MIN_FIT_SCALE)
+    if not result["fits"]:
+        print(
+            f"警告:{out_path} 內容過長,字級縮到 {result['scale']:.2f} 倍(下限)還是塞不下"
+            f"(內容高度 {result['scrollHeight']}px > 可用 {result['available']}px),"
+            f"圖卡底部可能還是被裁切,建議精簡文案。",
+            file=sys.stderr,
+        )
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page(viewport={"width": 1080, "height": 1350})
-        page.goto(f"file://{tmp_html.resolve()}")
-
-        result = page.evaluate(AUTOFIT_JS, MIN_FIT_SCALE)
-        if not result["fits"]:
-            print(
-                f"警告:內容過長,字級縮到 {result['scale']:.2f} 倍(下限)還是塞不下"
-                f"(內容高度 {result['scrollHeight']}px > 可用 {result['available']}px),"
-                f"圖卡底部可能還是被裁切,建議精簡文案。",
-                file=sys.stderr,
-            )
-
-        page.screenshot(path=out_path)
-        browser.close()
-
-    tmp_html.unlink(missing_ok=True)
+    page.screenshot(path=out_path)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--payload", required=True, help="payload.json 路徑")
-    ap.add_argument("--out", required=True, help="輸出 PNG 路徑")
+    ap.add_argument("--out-dir", required=True, help="輸出資料夾")
     ap.add_argument(
         "--template",
-        default="card_template.html",
-        help="templates/ 底下的模板檔名(預設 card_template.html)",
+        action="append",
+        required=True,
+        dest="templates",
+        help="templates/ 底下的模板檔名,依輪播順序重複指定這個參數(可多次)",
     )
     args = ap.parse_args()
 
     data = load_payload(args.payload)
-    html = render_html(data, args.template)
-    html_to_png(html, args.out)
-    print(f"圖卡已輸出: {args.out}")
+    out_dir = pathlib.Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tmp_html_path = out_dir / "_card_tmp.html"
+
+    out_paths = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page(viewport={"width": 1080, "height": 1350})
+        for i, template_name in enumerate(args.templates, start=1):
+            html = render_html(data, template_name)
+            out_path = str(out_dir / f"slide-{i}.png")
+            html_to_png(page, html, tmp_html_path, out_path)
+            out_paths.append(out_path)
+        browser.close()
+
+    tmp_html_path.unlink(missing_ok=True)
+
+    for p in out_paths:
+        print(f"圖卡已輸出: {p}")
 
 
 if __name__ == "__main__":

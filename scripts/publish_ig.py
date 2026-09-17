@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-用 Instagram Content Publishing API 發布單張圖片貼文。
+用 Instagram Content Publishing API 發布貼文。給 1 個 --image-url 就發單圖,
+給 2 個以上就自動發輪播(carousel)。
 
 需要環境變數:
     IG_ACCESS_TOKEN        Meta long-lived access token(要有 instagram_content_publish 權限)
@@ -8,6 +9,7 @@
 
 用法:
     python3 publish_ig.py --image-url https://.../card.png --caption "文案內容"
+    python3 publish_ig.py --image-url https://.../slide-1.png --image-url https://.../slide-2.png --caption "文案內容"
 """
 import argparse
 import os
@@ -30,15 +32,35 @@ def get_env(name: str) -> str:
     return val
 
 
-def create_media_container(ig_user_id: str, token: str, image_url: str, caption: str) -> str:
+def create_media_container(
+    ig_user_id: str, token: str, image_url: str, caption: str = None, is_carousel_item: bool = False
+) -> str:
+    data = {"image_url": image_url, "access_token": token}
+    if caption is not None:
+        data["caption"] = caption
+    if is_carousel_item:
+        data["is_carousel_item"] = "true"
+    resp = requests.post(f"{GRAPH_BASE}/{ig_user_id}/media", data=data, timeout=30)
+    body = resp.json()
+    if "id" not in body:
+        raise RuntimeError(f"建立 media container 失敗: {body}")
+    return body["id"]
+
+
+def create_carousel_container(ig_user_id: str, token: str, children_ids: list, caption: str) -> str:
     resp = requests.post(
         f"{GRAPH_BASE}/{ig_user_id}/media",
-        data={"image_url": image_url, "caption": caption, "access_token": token},
+        data={
+            "media_type": "CAROUSEL",
+            "children": ",".join(children_ids),
+            "caption": caption,
+            "access_token": token,
+        },
         timeout=30,
     )
     body = resp.json()
     if "id" not in body:
-        raise RuntimeError(f"建立 media container 失敗: {body}")
+        raise RuntimeError(f"建立 carousel container 失敗: {body}")
     return body["id"]
 
 
@@ -72,9 +94,38 @@ def publish(ig_user_id: str, token: str, creation_id: str) -> dict:
     return body
 
 
+def publish_single(ig_user_id: str, token: str, image_url: str, caption: str) -> dict:
+    print(f"建立 media container,image_url={image_url}")
+    creation_id = create_media_container(ig_user_id, token, image_url, caption=caption)
+    print(f"container id: {creation_id},等待處理完成...")
+    wait_until_ready(creation_id, token)
+    return publish(ig_user_id, token, creation_id)
+
+
+def publish_carousel(ig_user_id: str, token: str, image_urls: list, caption: str) -> dict:
+    children_ids = []
+    for image_url in image_urls:
+        print(f"建立 carousel child container,image_url={image_url}")
+        child_id = create_media_container(ig_user_id, token, image_url, is_carousel_item=True)
+        wait_until_ready(child_id, token)
+        children_ids.append(child_id)
+
+    print(f"建立 carousel container,children={children_ids}")
+    creation_id = create_carousel_container(ig_user_id, token, children_ids, caption)
+    print(f"carousel container id: {creation_id},等待處理完成...")
+    wait_until_ready(creation_id, token)
+    return publish(ig_user_id, token, creation_id)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image-url", required=True, help="公開可存取的圖片網址")
+    ap.add_argument(
+        "--image-url",
+        action="append",
+        required=True,
+        dest="image_urls",
+        help="公開可存取的圖片網址,依輪播順序重複指定這個參數(1 個就發單圖)",
+    )
     ap.add_argument("--caption", required=True, help="貼文文案(含 hashtag)")
     args = ap.parse_args()
 
@@ -91,14 +142,12 @@ def main():
             file=sys.stderr,
         )
 
-    print(f"建立 media container,image_url={args.image_url}")
-    creation_id = create_media_container(ig_user_id, token, args.image_url, args.caption)
-    print(f"container id: {creation_id},等待處理完成...")
-
-    wait_until_ready(creation_id, token)
-
     print("開始 publish...")
-    result = publish(ig_user_id, token, creation_id)
+    if len(args.image_urls) == 1:
+        result = publish_single(ig_user_id, token, args.image_urls[0], args.caption)
+    else:
+        result = publish_carousel(ig_user_id, token, args.image_urls, args.caption)
+
     print(f"發布完成: {result}")
 
 

@@ -59,50 +59,68 @@ jobs:
           fi
           cat payload.json
 
-      - name: Render card image
+      - name: Render carousel slides
         run: |
-          python3 scripts/render_card.py --payload payload.json --out output/card.png --template closing_card_template.html
+          python3 scripts/render_card.py --payload payload.json --out-dir output \
+            --template closing_card_template_1.html --template closing_card_template_2.html
 
-      - name: Commit image to repo
+      - name: Commit images to repo
         id: commit_image
         run: |
           git config user.name "ig-auto-post-bot"
           git config user.email "actions@users.noreply.github.com"
           mkdir -p assets
-          cp output/card.png "assets/closing-card-$(date +%Y%m%d-%H%M%S).png"
+          TS=$(date +%Y%m%d-%H%M%S)
+          cp output/slide-1.png "assets/closing-card-$TS-1.png"
+          cp output/slide-2.png "assets/closing-card-$TS-2.png"
           git add assets/
           git commit -m "chore: add daily closing IG card $(date +%Y-%m-%d)"
           git push
-          echo "path=$(git show --stat HEAD | head -2 | tail -1 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve public image URL via jsDelivr
+      - name: Resolve public URLs via jsDelivr and wait for CDN propagation
         id: image_url
         run: |
-          FILE_PATH=$(git diff --name-only HEAD~1 HEAD | grep assets/ | head -1)
           REPO="${{ github.repository }}"
           BRANCH="${{ github.ref_name }}"
-          RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${FILE_PATH}"
-          JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}"
-          # 強制 purge jsDelivr 快取,確保抓到最新這張圖
-          curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
-          echo "url=${JSDELIVR_URL}" >> "$GITHUB_OUTPUT"
-          echo "raw_fallback=${RAW_URL}" >> "$GITHUB_OUTPUT"
-          echo "file_path=${FILE_PATH}" >> "$GITHUB_OUTPUT"
+          FILE_PATHS=$(git diff --name-only HEAD~1 HEAD | grep assets/)
 
-      - name: Wait for CDN propagation
-        run: |
-          URL="${{ steps.image_url.outputs.url }}"
-          for i in $(seq 1 20); do
-            STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$URL")
-            if [ "$STATUS" = "200" ]; then
-              echo "jsDelivr ready after $((i * 5))s (status $STATUS)"
-              exit 0
+          URLS=""
+          PATHS_OUT=""
+          for FILE_PATH in $FILE_PATHS; do
+            JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}"
+            # 強制 purge jsDelivr 快取,確保抓到最新這張圖
+            curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
+
+            READY=0
+            for i in $(seq 1 20); do
+              STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$JSDELIVR_URL")
+              if [ "$STATUS" = "200" ]; then
+                echo "jsDelivr ready for $FILE_PATH after $((i * 5))s"
+                READY=1
+                break
+              fi
+              echo "attempt $i for $FILE_PATH: status $STATUS, retrying in 5s..."
+              sleep 5
+            done
+            if [ "$READY" != "1" ]; then
+              echo "jsDelivr never returned 200 for $FILE_PATH within 100s, giving up" >&2
+              exit 1
             fi
-            echo "attempt $i: status $STATUS, retrying in 5s..."
-            sleep 5
+
+            URLS="$URLS$JSDELIVR_URL"$'\n'
+            PATHS_OUT="$PATHS_OUT$FILE_PATH"$'\n'
           done
-          echo "jsDelivr never returned 200 within 100s, giving up" >&2
-          exit 1
+
+          {
+            echo "urls<<EOF"
+            printf '%s' "$URLS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "file_paths<<EOF"
+            printf '%s' "$PATHS_OUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Extract caption from payload
         id: caption
@@ -114,21 +132,27 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Publish to Instagram
+      - name: Publish carousel to Instagram
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
         run: |
-          python3 scripts/publish_ig.py \
-            --image-url "${{ steps.image_url.outputs.url }}" \
+          IMAGE_ARGS=()
+          while IFS= read -r url; do
+            [ -n "$url" ] && IMAGE_ARGS+=(--image-url "$url")
+          done <<< "${{ steps.image_url.outputs.urls }}"
+
+          python3 scripts/publish_ig.py "${IMAGE_ARGS[@]}" \
             --caption "${{ steps.caption.outputs.text }}"
 
-      - name: Remove published card from assets/
+      - name: Remove published cards from assets/
         if: success()
         run: |
           git config user.name "ig-auto-post-bot"
           git config user.email "actions@users.noreply.github.com"
-          git rm "${{ steps.image_url.outputs.file_path }}"
+          while IFS= read -r FILE_PATH; do
+            [ -n "$FILE_PATH" ] && git rm "$FILE_PATH"
+          done <<< "${{ steps.image_url.outputs.file_paths }}"
           git commit -m "chore: remove published closing IG card $(date +%Y-%m-%d)"
           git pull --rebase
           git push

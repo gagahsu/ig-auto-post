@@ -12,10 +12,12 @@ The two tracks are distinguished only by email subject prefix, template, and cro
 |---|---|---|
 | workflow | `.github/workflows/post-to-ig.yml` | `.github/workflows/post-closing-to-ig.yml` |
 | email subject prefix | `IG_BRIEFING_PAYLOAD` | `IG_CLOSING_PAYLOAD` |
-| template | `templates/card_template.html` | `templates/closing_card_template.html` |
+| templates (2-slide carousel) | `templates/card_template_1.html` + `_2.html` | `templates/closing_card_template_1.html` + `_2.html` |
 | schedule (Taipei) | 08:05 | 22:15 |
 
 The closing-summary track currently has no documented Claude Project scheduled-task prompt in this repo (unlike `project-scheduled-task-prompt.md` for the briefing) — the user manages that prompt on the Claude Project side themselves; it must send subject `IG_CLOSING_PAYLOAD {YYYY-MM-DD}` with a plain-text body matching `payload_closing.example.json`'s schema exactly.
+
+Each track posts a 2-image IG carousel, not a single image — cramming a variable amount of daily content into one card made text unreadably small on mobile, so each pipeline always renders exactly 2 fixed-purpose slides (briefing: futures+US markets, then news+groups; closing: indices+institutional flows, then groups+notes) and publishes them as a carousel via `publish_ig.py`.
 
 ## Commands
 
@@ -23,15 +25,18 @@ The closing-summary track currently has no documented Claude Project scheduled-t
 pip install -r requirements.txt
 playwright install --with-deps chromium
 
-# Render a card locally from payload JSON (briefing track)
-python3 scripts/render_card.py --payload payload.example.json --out output/card.png
+# Render the briefing track's 2-slide carousel locally from payload JSON
+python3 scripts/render_card.py --payload payload.example.json --out-dir output \
+  --template card_template_1.html --template card_template_2.html
 
-# Render the closing-summary track (different template)
-python3 scripts/render_card.py --payload payload_closing.example.json --out output/closing_card.png --template closing_card_template.html
+# Render the closing-summary track (different templates)
+python3 scripts/render_card.py --payload payload_closing.example.json --out-dir output \
+  --template closing_card_template_1.html --template closing_card_template_2.html
 
 # Publish to Instagram (requires IG_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID env vars,
-# and image must already be at a public URL)
-python3 scripts/publish_ig.py --image-url <public-url> --caption "text"
+# and images must already be at public URLs). One --image-url publishes a single
+# image; two or more automatically publishes a carousel.
+python3 scripts/publish_ig.py --image-url <url-1> --image-url <url-2> --caption "text"
 ```
 
 No test suite, linter, or build step exists in this repo.
@@ -48,11 +53,11 @@ Three separate execution contexts, each owning one stage — do not blur these b
 
 2. **GitHub Actions workflows** (`.github/workflows/post-to-ig.yml` and `.github/workflows/post-closing-to-ig.yml`) — the only things that touch Meta/Instagram, and also the thing that pulls from Gmail. Same structure, each triggered by `schedule` (real, daily cron — see the table above), `repository_dispatch` (`post_briefing` / `post_closing`, kept as an emergency/manual fallback), or `workflow_dispatch` (manual test — payload pasted as a JSON string, or left blank to exercise the Gmail-fetch path). Pipeline inside one job:
    - on `schedule` (or `workflow_dispatch` with no pasted payload): `fetch_briefing_email.py --subject-prefix <prefix>` uses a Gmail OAuth2 refresh token to find and parse today's email into `payload.json`; on `repository_dispatch`/`workflow_dispatch` with a pasted payload: write `payload.json` from the event payload directly
-   - `render_card.py --template <template>` → `output/card.png`
-   - commit the PNG into `assets/` on the repo (this is how the image gets a public URL — there's no separate image host)
-   - build a jsDelivr CDN URL for that committed file and force-purge jsDelivr's cache, then sleep 15s for propagation
+   - `render_card.py --template <slide-1> --template <slide-2>` → `output/slide-1.png`, `output/slide-2.png` (2-image carousel; see below)
+   - commit both PNGs into `assets/` on the repo (this is how the images get public URLs — there's no separate image host)
+   - build a jsDelivr CDN URL for each committed file, force-purge jsDelivr's cache for each, and poll each until it returns 200
    - extract `caption` from the payload
-   - `publish_ig.py` creates a media container, polls until `FINISHED`, then publishes
+   - `publish_ig.py` with both `--image-url` flags creates a carousel-item container per image, polls each until `FINISHED`, wraps them in a `media_type=CAROUSEL` container, polls that, then publishes
 
 3. **Rendering** (`scripts/render_card.py` + `templates/card_template.html`) — Jinja2 renders the template, Playwright loads the resulting HTML as a local `file://` URL and screenshots it at exactly 1080x1350 (viewport size must stay in sync with the CSS `width`/`height` in the template). `render_card.py` also auto-infers `up`/`down` CSS classes for `us_indices`/`adr` entries from the `+`/`-` sign of `value` when `cls` isn't explicitly set in the payload — see `payload.example.json` for the full expected schema.
 
@@ -63,3 +68,4 @@ Three separate execution contexts, each owning one stage — do not blur these b
 - Instagram has no edit endpoint; a bad post can only be deleted and redone. Test workflow changes via manual `workflow_dispatch` before trusting them on the real schedule.
 - `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` / `GMAIL_REFRESH_TOKEN` / `GMAIL_SELF_ADDRESS` are GitHub Actions secrets used only by `fetch_briefing_email.py` to read the briefing email via the Gmail API — obtained once locally via `scripts/gmail_get_refresh_token.py` (OAuth2 installed-app flow; personal Gmail has no service-account/domain-wide-delegation option). Unrelated to the Claude Project scheduled task, which only needs ordinary Gmail read/send access through its own Gmail connection.
 - The Claude Project scheduled task no longer holds or uses any GitHub token — it was removed from this design when the trigger direction flipped from "Claude pushes" to "GitHub pulls".
+- Cards have a fixed 1080x1350 frame but daily content length (news count, group-list length, notes) varies. Elements marked `.fit-text` in the templates get auto-shrunk by a Playwright post-load JS pass in `render_card.py` (down to a 55% floor) if content would otherwise overflow the card's border — see `AUTOFIT_JS`/`MIN_FIT_SCALE` in that file. This is a last-resort safety net; the primary fix for "too much text" is the 2-slide carousel split itself, not this shrink mechanism.

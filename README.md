@@ -1,25 +1,28 @@
 # 台股盤前速報 / 盤後統整 → IG 自動發布
 
 兩條獨立 pipeline,共用同一組 Gmail OAuth secrets 跟 render/publish script,差別只在
-讀信的主旨前綴、套用的模板、跑的時間：
+讀信的主旨前綴、套用的模板、跑的時間。每條 pipeline 都發 2 張圖的輪播(carousel)
+貼文,不是單圖 — 資料量每天不一樣,塞單張圖字會被擠得很小,拆兩張手機上才看得清楚：
 
 | | 盤前速報 | 盤後統整 |
 |---|---|---|
 | workflow | `.github/workflows/post-to-ig.yml` | `.github/workflows/post-closing-to-ig.yml` |
 | 讀信主旨前綴 | `IG_BRIEFING_PAYLOAD` | `IG_CLOSING_PAYLOAD` |
-| 模板 | `templates/card_template.html` | `templates/closing_card_template.html` |
+| 模板(輪播 2 張) | `templates/card_template_1.html` + `_2.html` | `templates/closing_card_template_1.html` + `_2.html` |
 | 排程(台北) | 08:05 | 22:15 |
 
 ## 檔案結構
 ```
 .github/workflows/post-to-ig.yml         ← 盤前速報 workflow
 .github/workflows/post-closing-to-ig.yml ← 盤後統整 workflow
-scripts/render_card.py                   ← 把資料套進模板，渲染成 PNG(--template 選模板)
-scripts/publish_ig.py                    ← 呼叫 Meta Graph API 發布
+scripts/render_card.py                   ← 把資料套進模板,依序渲染成輪播 PNG(--template 可重複指定)
+scripts/publish_ig.py                    ← 呼叫 Meta Graph API 發布(--image-url 給 1 個發單圖,給多個自動發輪播)
 scripts/fetch_briefing_email.py          ← 用 Gmail API 讀當天的 payload 信,解析成 payload.json(--subject-prefix 選主旨)
 scripts/gmail_get_refresh_token.py       ← 一次性本機工具,取得 Gmail OAuth2 refresh token
-templates/card_template.html             ← 盤前速報圖卡模板(1080x1350)
-templates/closing_card_template.html     ← 盤後統整圖卡模板(1080x1350)
+templates/card_template_1.html           ← 盤前速報輪播第1張:期貨與美股(1080x1350)
+templates/card_template_2.html           ← 盤前速報輪播第2張:焦點快訊與族群(1080x1350)
+templates/closing_card_template_1.html   ← 盤後統整輪播第1張:指數與籌碼(1080x1350)
+templates/closing_card_template_2.html   ← 盤後統整輪播第2張:族群與明日觀測(1080x1350)
 payload.example.json                     ← 盤前速報測試用範例資料
 payload_closing.example.json             ← 盤後統整測試用範例資料
 requirements.txt
@@ -80,8 +83,9 @@ long-lived token（約 60 天效期，記得排一個提醒到期前換新）。
 ```bash
 pip install -r requirements.txt
 playwright install --with-deps chromium
-python3 scripts/render_card.py --payload payload.example.json --out output/card.png
-# 打開 output/card.png 看排版對不對
+python3 scripts/render_card.py --payload payload.example.json --out-dir output \
+  --template card_template_1.html --template card_template_2.html
+# 打開 output/slide-1.png、output/slide-2.png 看排版對不對
 ```
 
 確認圖卡沒問題後，測試發布（需要先把圖片放到一個公開網址，例如先手動 push
@@ -93,7 +97,8 @@ Repo → Actions → "Post daily briefing to Instagram" → Run workflow →
 
 盤後統整同理，改用 `payload_closing.example.json`：
 ```bash
-python3 scripts/render_card.py --payload payload_closing.example.json --out output/closing_card.png --template closing_card_template.html
+python3 scripts/render_card.py --payload payload_closing.example.json --out-dir output \
+  --template closing_card_template_1.html --template closing_card_template_2.html
 ```
 Repo → Actions → "Post closing summary to Instagram" → Run workflow → 貼
 `payload_closing.example.json` 的內容 → Run。
@@ -133,3 +138,7 @@ Project 那邊設定，主旨務必是 `IG_CLOSING_PAYLOAD {YYYY-MM-DD}`，內�
 - Gmail OAuth consent screen 停留在 Testing 模式的 refresh token 理論上不會過期，
   但如果哪天手動把 App 改成 Production 或撤銷過權限，`GMAIL_REFRESH_TOKEN` 就會
   失效，需要重跑一次 `gmail_get_refresh_token.py`。
+- 每張輪播圖裡標 `.fit-text` 的區塊（新聞/焦點族群/盤後重點等長度會變動的內文）,
+  `render_card.py` 會在內容太長、超出卡片固定高度時自動等比縮小字級,縮到
+  55% 還塞不下就放棄、印警告到 log,圖卡底部可能被裁切 —— 平常應該不會踩到,
+  真的遇到記得去 Actions log 看警告,考慮精簡文案或未來拆成 3 張。
