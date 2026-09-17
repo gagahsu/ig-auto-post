@@ -72,7 +72,19 @@ jobs:
           echo "raw_fallback=${RAW_URL}" >> "$GITHUB_OUTPUT"
 
       - name: Wait for CDN propagation
-        run: sleep 15
+        run: |
+          URL="${{ steps.image_url.outputs.url }}"
+          for i in $(seq 1 20); do
+            STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "jsDelivr ready after $((i * 5))s (status $STATUS)"
+              exit 0
+            fi
+            echo "attempt $i: status $STATUS, retrying in 5s..."
+            sleep 5
+          done
+          echo "jsDelivr never returned 200 within 100s, giving up" >&2
+          exit 1
 
       - name: Extract caption from payload
         id: caption
