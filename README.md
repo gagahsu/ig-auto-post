@@ -12,8 +12,9 @@ requirements.txt
 
 ## 一次性設定
 
-### 1. 建這個 repo（可以是 public 或 private，jsDelivr 兩者都支援）
-把這些檔案 push 上去，維持這個資料夾結構。
+### 1. 建這個 repo（必須是 public，jsDelivr / raw.githubusercontent 都不支援 private repo）
+把這些檔案 push 上去，維持這個資料夾結構。Secrets（token 等）不會因為 repo
+公開而外洩，GitHub Secrets 一律加密，跟 repo 可見度無關。
 
 ### 2. 設定 GitHub Secrets
 Repo → Settings → Secrets and variables → Actions → New repository secret：
