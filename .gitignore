@@ -1,4 +1,5 @@
 client_secret*.json
 payload.json
 output/
+output_*/
 __pycache__/

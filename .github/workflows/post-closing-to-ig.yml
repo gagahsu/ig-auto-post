@@ -62,7 +62,7 @@ jobs:
       - name: Render carousel slides
         run: |
           python3 scripts/render_card.py --payload payload.json --out-dir output \
-            --template closing_card_template_1.html --template closing_card_template_2.html
+            --template closing_card_template_1.html --template closing_card_template_2.html --template closing_card_template_3.html
 
       - name: Commit images to repo
         id: commit_image
@@ -73,6 +73,7 @@ jobs:
           TS=$(date +%Y%m%d-%H%M%S)
           cp output/slide-1.png "assets/closing-card-$TS-1.png"
           cp output/slide-2.png "assets/closing-card-$TS-2.png"
+          cp output/slide-3.png "assets/closing-card-$TS-3.png"
           git add assets/
           git commit -m "chore: add daily closing IG card $(date +%Y-%m-%d)"
           git push

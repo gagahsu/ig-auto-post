@@ -40,38 +40,26 @@
     padding-bottom: 30px;
     margin-bottom: 36px;
   }
-  .content { flex-grow: 1; display: flex; flex-direction: column; justify-content: space-evenly; }
-  .group-box {
-    border: 4px solid #232724; border-radius: 28px; background: #fff;
-    padding: 32px 36px; font-size: 36px; line-height: 1.6;
+  .focus-box {
+    background: #fef08a; border: 4px solid #232724; border-radius: 28px;
+    padding: 36px 38px; font-size: 40px; line-height: 1.6; flex-grow: 1;
   }
-  .group-box.leading { border-color: #dc2626; }
-  .group-box.weak { border-color: #059669; }
-  .group-title { font-weight: 900; font-size: 40px; margin-bottom: 14px; color: #232724; }
-  .group-title.leading { color: #dc2626; }
-  .group-title.weak { color: #059669; }
+  .focus-title { font-weight: 900; font-size: 42px; margin-bottom: 20px; color: #1f2937; }
   .footer { text-align: right; font-size: 22px; color: #777; margin-top: 20px; }
 </style>
 </head>
 <body>
   <div class="outer">
     <div class="card">
-      <div class="title">彡 台股盤後統整 ｜ {{ date }} ミ</div>
-      <div class="slide-tag">2 / 3 ｜ 領漲與弱勢族群</div>
+      <div class="title">彡 台股盤前速報 ｜ {{ date }} ミ</div>
+      <div class="slide-tag">3 / 3 ｜ 族群與開盤觀測</div>
 
-      <div class="content">
-        <div class="group-box leading fit-text">
-          <div class="group-title leading">領漲族群</div>
-          {{ leading_groups | safe }}
-        </div>
-
-        <div class="group-box weak fit-text">
-          <div class="group-title weak">弱勢/整理</div>
-          {{ weak_groups | safe }}
-        </div>
+      <div class="focus-box fit-text">
+        <div class="focus-title">📌 重點族群 &amp; 開盤觀測</div>
+        {{ groups_note | safe }}
       </div>
 
-      <div class="footer">個人盤後筆記 ｜ 非投資建議</div>
+      <div class="footer">個人盤前筆記 ｜ 非投資建議</div>
     </div>
   </div>
 </body>
