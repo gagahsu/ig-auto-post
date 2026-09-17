@@ -1,0 +1,94 @@
+name: Post daily briefing to Instagram
+
+on:
+  repository_dispatch:
+    types: [post_briefing]
+  # 方便手動測試:去 repo 的 Actions 頁籤按 "Run workflow"
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: "測試用 payload(貼上完整 JSON 字串)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  render-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Write payload.json
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "$MANUAL_PAYLOAD" > payload.json
+          else
+            echo "$DISPATCH_PAYLOAD" > payload.json
+          fi
+          cat payload.json
+
+      - name: Render card image
+        run: |
+          python3 scripts/render_card.py --payload payload.json --out output/card.png
+
+      - name: Commit image to repo
+        id: commit_image
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          mkdir -p assets
+          cp output/card.png "assets/card-$(date +%Y%m%d-%H%M%S).png"
+          git add assets/
+          git commit -m "chore: add daily IG card $(date +%Y-%m-%d)"
+          git push
+          echo "path=$(git show --stat HEAD | head -2 | tail -1 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve public image URL via jsDelivr
+        id: image_url
+        run: |
+          FILE_PATH=$(git diff --name-only HEAD~1 HEAD | grep assets/ | head -1)
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+          RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${FILE_PATH}"
+          JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}"
+          # 強制 purge jsDelivr 快取,確保抓到最新這張圖
+          curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
+          echo "url=${JSDELIVR_URL}" >> "$GITHUB_OUTPUT"
+          echo "raw_fallback=${RAW_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for CDN propagation
+        run: sleep 15
+
+      - name: Extract caption from payload
+        id: caption
+        run: |
+          CAPTION=$(python3 -c "import json;print(json.load(open('payload.json')).get('caption',''))")
+          {
+            echo "text<<EOF"
+            echo "$CAPTION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+        run: |
+          python3 scripts/publish_ig.py \
+            --image-url "${{ steps.image_url.outputs.url }}" \
+            --caption "${{ steps.caption.outputs.text }}"
