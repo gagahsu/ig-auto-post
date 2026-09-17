@@ -1,14 +1,27 @@
-# 台股盤前速報 → IG 自動發布
+# 台股盤前速報 / 盤後統整 → IG 自動發布
+
+兩條獨立 pipeline,共用同一組 Gmail OAuth secrets 跟 render/publish script,差別只在
+讀信的主旨前綴、套用的模板、跑的時間：
+
+| | 盤前速報 | 盤後統整 |
+|---|---|---|
+| workflow | `.github/workflows/post-to-ig.yml` | `.github/workflows/post-closing-to-ig.yml` |
+| 讀信主旨前綴 | `IG_BRIEFING_PAYLOAD` | `IG_CLOSING_PAYLOAD` |
+| 模板 | `templates/card_template.html` | `templates/closing_card_template.html` |
+| 排程(台北) | 08:05 | 22:15 |
 
 ## 檔案結構
 ```
-.github/workflows/post-to-ig.yml   ← GitHub Actions workflow
-scripts/render_card.py             ← 把資料套進模板，渲染成 PNG
-scripts/publish_ig.py              ← 呼叫 Meta Graph API 發布
-scripts/fetch_briefing_email.py    ← 用 Gmail API 讀當天的 payload 信,解析成 payload.json
-scripts/gmail_get_refresh_token.py ← 一次性本機工具,取得 Gmail OAuth2 refresh token
-templates/card_template.html       ← 圖卡的 HTML/CSS 模板(1080x1350)
-payload.example.json               ← 測試用範例資料
+.github/workflows/post-to-ig.yml         ← 盤前速報 workflow
+.github/workflows/post-closing-to-ig.yml ← 盤後統整 workflow
+scripts/render_card.py                   ← 把資料套進模板，渲染成 PNG(--template 選模板)
+scripts/publish_ig.py                    ← 呼叫 Meta Graph API 發布
+scripts/fetch_briefing_email.py          ← 用 Gmail API 讀當天的 payload 信,解析成 payload.json(--subject-prefix 選主旨)
+scripts/gmail_get_refresh_token.py       ← 一次性本機工具,取得 Gmail OAuth2 refresh token
+templates/card_template.html             ← 盤前速報圖卡模板(1080x1350)
+templates/closing_card_template.html     ← 盤後統整圖卡模板(1080x1350)
+payload.example.json                     ← 盤前速報測試用範例資料
+payload_closing.example.json             ← 盤後統整測試用範例資料
 requirements.txt
 ```
 
@@ -78,17 +91,33 @@ python3 scripts/render_card.py --payload payload.example.json --out output/card.
 Repo → Actions → "Post daily briefing to Instagram" → Run workflow →
 把 `payload.example.json` 的內容整個貼進 `payload_json` 欄位 → Run。
 
+盤後統整同理，改用 `payload_closing.example.json`：
+```bash
+python3 scripts/render_card.py --payload payload_closing.example.json --out output/closing_card.png --template closing_card_template.html
+```
+Repo → Actions → "Post closing summary to Instagram" → Run workflow → 貼
+`payload_closing.example.json` 的內容 → Run。
+
 ## 正式串接：schedule cron 自動拉信
 
-不需要手動做什麼，`.github/workflows/post-to-ig.yml` 裡的 `schedule: cron:
-"5 0 * * *"`（00:05 UTC = 08:05 台北）每天會自動觸發，自己跑
-`fetch_briefing_email.py` 去讀 Claude 排程任務寄的那封信。前提是上面「一次性
-設定」的 Gmail secrets 都設好、且 Claude 那邊的排程任務有照
-`project-scheduled-task-prompt.md` 的指示把 JSON 寄回自己信箱。
+不需要手動做什麼：
+- `.github/workflows/post-to-ig.yml` 的 `schedule: cron: "5 0 * * *"`
+  （00:05 UTC = 08:05 台北）每天自動觸發，去讀主旨 `IG_BRIEFING_PAYLOAD {日期}`
+  的信。
+- `.github/workflows/post-closing-to-ig.yml` 的 `schedule: cron: "15 14 * * *"`
+  （14:15 UTC = 22:15 台北）每天自動觸發，去讀主旨 `IG_CLOSING_PAYLOAD {日期}`
+  的信。
 
-`repository_dispatch`（`event_type: post_briefing`）觸發路徑還留著，當作緊急
-補發或測試用；`workflow_dispatch` 手動觸發時如果 `payload_json` 留空，也會走
-跟 schedule 一樣的「去讀信」路徑，方便直接測整條讀信流程。
+前提是上面「一次性設定」的 Gmail secrets 都設好、且有對應的來源自動把整理好
+的 JSON 寄回自己信箱（盤前速報的部分見 `project-scheduled-task-prompt.md`；
+盤後統整目前沒有寫在這個 repo 裡的排程任務指令文件，由使用者自行在 Claude
+Project 那邊設定，主旨務必是 `IG_CLOSING_PAYLOAD {YYYY-MM-DD}`，內文純文字、
+就是照 `payload_closing.example.json` 格式整理好的 JSON，一個字不多不少）。
+
+`repository_dispatch`（`event_type: post_briefing` / `post_closing`）觸發路徑
+都還留著，當作緊急補發或測試用；`workflow_dispatch` 手動觸發時如果
+`payload_json` 留空，也會走跟 schedule 一樣的「去讀信」路徑，方便直接測整條
+讀信流程。
 
 ## 已知限制 / 之後可以改進的地方
 

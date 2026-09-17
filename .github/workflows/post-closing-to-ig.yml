@@ -1,0 +1,134 @@
+name: Post closing summary to Instagram
+
+on:
+  # 正式排程:原始盤後信約 22:00 台北寄達(融資餘額要等 21:00 後才抓得到),
+  # 22:15 UTC+8 = 14:15 UTC,留 15 分鐘緩衝去讀那封信。
+  schedule:
+    - cron: "15 14 * * *"
+  # 保留:緊急補發/測試用
+  repository_dispatch:
+    types: [post_closing]
+  # 方便手動測試:去 repo 的 Actions 頁籤按 "Run workflow"
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: "測試用 payload(貼上完整 JSON 字串,留空則跟 schedule 一樣去讀信)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  render-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Fetch payload from Gmail
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          GMAIL_SELF_ADDRESS: ${{ secrets.GMAIL_SELF_ADDRESS }}
+        run: |
+          python3 scripts/fetch_briefing_email.py --out payload.json --subject-prefix IG_CLOSING_PAYLOAD
+          cat payload.json
+
+      - name: Write payload.json from manual/dispatch input
+        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "$MANUAL_PAYLOAD" > payload.json
+          else
+            echo "$DISPATCH_PAYLOAD" > payload.json
+          fi
+          cat payload.json
+
+      - name: Render card image
+        run: |
+          python3 scripts/render_card.py --payload payload.json --out output/card.png --template closing_card_template.html
+
+      - name: Commit image to repo
+        id: commit_image
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          mkdir -p assets
+          cp output/card.png "assets/closing-card-$(date +%Y%m%d-%H%M%S).png"
+          git add assets/
+          git commit -m "chore: add daily closing IG card $(date +%Y-%m-%d)"
+          git push
+          echo "path=$(git show --stat HEAD | head -2 | tail -1 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve public image URL via jsDelivr
+        id: image_url
+        run: |
+          FILE_PATH=$(git diff --name-only HEAD~1 HEAD | grep assets/ | head -1)
+          REPO="${{ github.repository }}"
+          BRANCH="${{ github.ref_name }}"
+          RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/${FILE_PATH}"
+          JSDELIVR_URL="https://cdn.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}"
+          # 強制 purge jsDelivr 快取,確保抓到最新這張圖
+          curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
+          echo "url=${JSDELIVR_URL}" >> "$GITHUB_OUTPUT"
+          echo "raw_fallback=${RAW_URL}" >> "$GITHUB_OUTPUT"
+          echo "file_path=${FILE_PATH}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for CDN propagation
+        run: |
+          URL="${{ steps.image_url.outputs.url }}"
+          for i in $(seq 1 20); do
+            STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ]; then
+              echo "jsDelivr ready after $((i * 5))s (status $STATUS)"
+              exit 0
+            fi
+            echo "attempt $i: status $STATUS, retrying in 5s..."
+            sleep 5
+          done
+          echo "jsDelivr never returned 200 within 100s, giving up" >&2
+          exit 1
+
+      - name: Extract caption from payload
+        id: caption
+        run: |
+          CAPTION=$(python3 -c "import json;print(json.load(open('payload.json')).get('caption',''))")
+          {
+            echo "text<<EOF"
+            echo "$CAPTION"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Instagram
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+        run: |
+          python3 scripts/publish_ig.py \
+            --image-url "${{ steps.image_url.outputs.url }}" \
+            --caption "${{ steps.caption.outputs.text }}"
+
+      - name: Remove published card from assets/
+        if: success()
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm "${{ steps.image_url.outputs.file_path }}"
+          git commit -m "chore: remove published closing IG card $(date +%Y-%m-%d)"
+          git pull --rebase
+          git push

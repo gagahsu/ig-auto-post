@@ -4,7 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Automated pipeline: Taiwan pre-market briefing email → parsed into JSON → rendered as a 1080x1350 IG card image (HTML/CSS via Playwright screenshot) → committed to repo → served via jsDelivr CDN → posted to Instagram via Meta Graph API. A Claude Project scheduled task reads Gmail, parses the briefing, and emails the JSON to the user's own inbox — it does not call any external API. A GitHub Actions `schedule` cron then pulls that email itself via the Gmail API and drives the rest of the pipeline. This "GitHub pulls" design (rather than "Claude pushes") exists because the Claude scheduled task's outbound network access is unreliable.
+Automated pipeline, run twice a day as two parallel tracks sharing the same mechanics: a Taiwan pre-market briefing email and a post-market closing-summary email, each parsed into JSON → rendered as a 1080x1350 IG card image (HTML/CSS via Playwright screenshot) → committed to repo → served via jsDelivr CDN → posted to Instagram via Meta Graph API. A Claude Project scheduled task reads Gmail, parses the source email, and emails the JSON to the user's own inbox — it does not call any external API. A GitHub Actions `schedule` cron then pulls that email itself via the Gmail API and drives the rest of the pipeline. This "GitHub pulls" design (rather than "Claude pushes") exists because the Claude scheduled task's outbound network access is unreliable.
+
+The two tracks are distinguished only by email subject prefix, template, and cron time — everything else (Gmail OAuth creds, `fetch_briefing_email.py`, `render_card.py`, `publish_ig.py`) is shared:
+
+| | pre-market briefing | post-market closing summary |
+|---|---|---|
+| workflow | `.github/workflows/post-to-ig.yml` | `.github/workflows/post-closing-to-ig.yml` |
+| email subject prefix | `IG_BRIEFING_PAYLOAD` | `IG_CLOSING_PAYLOAD` |
+| template | `templates/card_template.html` | `templates/closing_card_template.html` |
+| schedule (Taipei) | 08:05 | 22:15 |
+
+The closing-summary track currently has no documented Claude Project scheduled-task prompt in this repo (unlike `project-scheduled-task-prompt.md` for the briefing) — the user manages that prompt on the Claude Project side themselves; it must send subject `IG_CLOSING_PAYLOAD {YYYY-MM-DD}` with a plain-text body matching `payload_closing.example.json`'s schema exactly.
 
 ## Commands
 
@@ -12,8 +23,11 @@ Automated pipeline: Taiwan pre-market briefing email → parsed into JSON → re
 pip install -r requirements.txt
 playwright install --with-deps chromium
 
-# Render a card locally from payload JSON
+# Render a card locally from payload JSON (briefing track)
 python3 scripts/render_card.py --payload payload.example.json --out output/card.png
+
+# Render the closing-summary track (different template)
+python3 scripts/render_card.py --payload payload_closing.example.json --out output/closing_card.png --template closing_card_template.html
 
 # Publish to Instagram (requires IG_ACCESS_TOKEN, IG_BUSINESS_ACCOUNT_ID env vars,
 # and image must already be at a public URL)
@@ -22,9 +36,9 @@ python3 scripts/publish_ig.py --image-url <public-url> --caption "text"
 
 No test suite, linter, or build step exists in this repo.
 
-To test the full pipeline without waiting for the schedule: GitHub Actions →
-"Post daily briefing to Instagram" → Run workflow → paste `payload.example.json`
-contents into `payload_json` input.
+To test either pipeline without waiting for the schedule: GitHub Actions →
+"Post daily briefing to Instagram" (or "Post closing summary to Instagram") →
+Run workflow → paste the matching example payload's contents into `payload_json`.
 
 ## Architecture
 
@@ -32,9 +46,9 @@ Three separate execution contexts, each owning one stage — do not blur these b
 
 1. **Claude Project scheduled task** (`project-scheduled-task-prompt.md`, not code that runs in this repo) — reads Gmail for today's briefing email, parses it into the exact JSON schema documented there, and emails that JSON back to the user's own inbox with subject `IG_BRIEFING_PAYLOAD {YYYY-MM-DD}`, plain text body, nothing but the raw JSON. It must NOT call the GitHub API or Instagram/Meta APIs itself — no outbound API calls at all, only Gmail read + Gmail send. If it can't find today's source email, it stops rather than reusing stale data.
 
-2. **GitHub Actions workflow** (`.github/workflows/post-to-ig.yml`) — the only thing that touches Meta/Instagram, and now also the thing that pulls from Gmail. Triggered by `schedule` (real, daily cron at 00:05 UTC / 08:05 Taipei), `repository_dispatch` (kept as an emergency/manual fallback), or `workflow_dispatch` (manual test — payload pasted as a JSON string, or left blank to exercise the Gmail-fetch path). Pipeline inside one job:
-   - on `schedule` (or `workflow_dispatch` with no pasted payload): `fetch_briefing_email.py` uses a Gmail OAuth2 refresh token to find and parse today's `IG_BRIEFING_PAYLOAD` email into `payload.json`; on `repository_dispatch`/`workflow_dispatch` with a pasted payload: write `payload.json` from the event payload directly
-   - `render_card.py` → `output/card.png`
+2. **GitHub Actions workflows** (`.github/workflows/post-to-ig.yml` and `.github/workflows/post-closing-to-ig.yml`) — the only things that touch Meta/Instagram, and also the thing that pulls from Gmail. Same structure, each triggered by `schedule` (real, daily cron — see the table above), `repository_dispatch` (`post_briefing` / `post_closing`, kept as an emergency/manual fallback), or `workflow_dispatch` (manual test — payload pasted as a JSON string, or left blank to exercise the Gmail-fetch path). Pipeline inside one job:
+   - on `schedule` (or `workflow_dispatch` with no pasted payload): `fetch_briefing_email.py --subject-prefix <prefix>` uses a Gmail OAuth2 refresh token to find and parse today's email into `payload.json`; on `repository_dispatch`/`workflow_dispatch` with a pasted payload: write `payload.json` from the event payload directly
+   - `render_card.py --template <template>` → `output/card.png`
    - commit the PNG into `assets/` on the repo (this is how the image gets a public URL — there's no separate image host)
    - build a jsDelivr CDN URL for that committed file and force-purge jsDelivr's cache, then sleep 15s for propagation
    - extract `caption` from the payload

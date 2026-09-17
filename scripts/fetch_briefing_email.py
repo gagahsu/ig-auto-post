@@ -14,6 +14,7 @@ GitHub API。這支 script 就是接手「讀那封信」的部分。
 
 用法:
     python3 fetch_briefing_email.py --out payload.json
+    python3 fetch_briefing_email.py --out payload.json --subject-prefix IG_CLOSING_PAYLOAD
 """
 import argparse
 import base64
@@ -59,8 +60,10 @@ def get_access_token(client_id: str, client_secret: str, refresh_token: str) -> 
     return body["access_token"]
 
 
-def find_todays_message_id(access_token: str, self_address: str, today: str) -> str | None:
-    subject = f"{SUBJECT_PREFIX} {today}"
+def find_todays_message_id(
+    access_token: str, self_address: str, today: str, subject_prefix: str
+) -> str | None:
+    subject = f"{subject_prefix} {today}"
     query = f'from:me to:{self_address} subject:"{subject}"'
     resp = requests.get(
         f"{GMAIL_API_BASE}/messages",
@@ -106,6 +109,11 @@ def extract_json_body(access_token: str, message_id: str) -> dict:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="payload.json", help="輸出的 payload JSON 路徑")
+    ap.add_argument(
+        "--subject-prefix",
+        default=SUBJECT_PREFIX,
+        help=f"信件主旨前綴(預設 {SUBJECT_PREFIX}),後面會接一個空格加今天日期",
+    )
     args = ap.parse_args()
 
     client_id = get_env("GMAIL_CLIENT_ID")
@@ -117,10 +125,10 @@ def main():
 
     access_token = get_access_token(client_id, client_secret, refresh_token)
 
-    message_id = find_todays_message_id(access_token, self_address, today)
+    message_id = find_todays_message_id(access_token, self_address, today, args.subject_prefix)
     if not message_id:
         print(
-            f"今天({today})沒有找到主旨為「{SUBJECT_PREFIX} {today}」的信,不使用舊資料,直接停止。",
+            f"今天({today})沒有找到主旨為「{args.subject_prefix} {today}」的信,不使用舊資料,直接停止。",
             file=sys.stderr,
         )
         sys.exit(1)
