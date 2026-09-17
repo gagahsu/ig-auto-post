@@ -69,10 +69,12 @@ curl -X POST \
 
 ## 已知限制 / 之後可以改進的地方
 
-- 圖片目前是 commit 進 repo 的 `assets/` 資料夾，長期會讓 repo 變大。之後可以
-  改成推到獨立的 `assets` branch，或改用 GitHub Release 附件，避免污染 main
-  的 commit 歷史。
-- Long-lived token 約 60 天過期，需要手動更新 `IG_ACCESS_TOKEN` 這個 secret，
-  沒有做自動 refresh。
+- 圖片會先 commit 進 repo 的 `assets/` 資料夾讓 jsDelivr 抓到，IG 發布成功後
+  workflow 會自動 `git rm` 掉該檔案，避免 `assets/` 一直長大；但每次還是會留下
+  一組「新增 + 刪除」的 commit 紀錄，long-term 想要乾淨歷史的話可以考慮改推到
+  獨立的 `assets` branch 或 GitHub Release 附件。
+- Long-lived token 約 60 天過期，已經有 `refresh-ig-token.yml` 排程（每月 1、16
+  號）自動呼叫 refresh 並寫回 `IG_ACCESS_TOKEN` secret，理論上不用再手動換，
+  但仍需另外設定一組有 `Secrets: Read and write` 權限的 `GH_PAT_FOR_SECRETS`。
 - IG API 沒有編輯貼文的端點，發錯只能刪除重發，所以正式使用前務必先用
   `workflow_dispatch` 手動測過幾次。

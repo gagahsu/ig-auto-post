@@ -70,6 +70,7 @@ jobs:
           curl -sS "https://purge.jsdelivr.net/gh/${REPO}@${BRANCH}/${FILE_PATH}" || true
           echo "url=${JSDELIVR_URL}" >> "$GITHUB_OUTPUT"
           echo "raw_fallback=${RAW_URL}" >> "$GITHUB_OUTPUT"
+          echo "file_path=${FILE_PATH}" >> "$GITHUB_OUTPUT"
 
       - name: Wait for CDN propagation
         run: |
@@ -104,3 +105,13 @@ jobs:
           python3 scripts/publish_ig.py \
             --image-url "${{ steps.image_url.outputs.url }}" \
             --caption "${{ steps.caption.outputs.text }}"
+
+      - name: Remove published card from assets/
+        if: success()
+        run: |
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git rm "${{ steps.image_url.outputs.file_path }}"
+          git commit -m "chore: remove published IG card $(date +%Y-%m-%d)"
+          git pull --rebase
+          git push
