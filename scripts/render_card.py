@@ -20,6 +20,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 SCALAR_CLS_FIELDS = ("taiex_change", "otc_change", "margin_change")
 LIST_CLS_FIELDS = ("us_indices", "adr", "institutional")
+# 模板已經固定印「億」字尾,payload 這兩個欄位不該自己帶單位 —
+# 如果來源信解析時多帶了,這裡先砍掉,避免卡片上印出「8194.05億 億」。
+# (margin_balance 不在此列:模板沒幫它加字尾,payload 本來就要自己帶單位。)
+VOLUME_FIELDS = ("taiex_volume", "otc_volume")
 
 
 def load_payload(path: str) -> dict:
@@ -40,6 +44,10 @@ def load_payload(path: str) -> dict:
     for key in SCALAR_CLS_FIELDS:
         if key in data:
             data[f"{key}_cls"] = "up" if str(data[key]).strip().startswith("+") else "down"
+
+    for key in VOLUME_FIELDS:
+        if key in data:
+            data[key] = str(data[key]).strip().removesuffix("億").strip()
 
     return data
 
