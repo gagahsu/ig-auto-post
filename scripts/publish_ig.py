@@ -22,6 +22,8 @@ GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 def get_env(name: str) -> str:
     val = os.environ.get(name)
+    if val:
+        val = val.strip()
     if not val:
         print(f"缺少環境變數: {name}", file=sys.stderr)
         sys.exit(1)
@@ -78,6 +80,16 @@ def main():
 
     token = get_env("IG_ACCESS_TOKEN")
     ig_user_id = get_env("IG_BUSINESS_ACCOUNT_ID")
+
+    # 不印出完整 token,只印長度跟開頭幾個字,方便判斷是不是貼錯格式
+    # (正常的 long-lived user token 開頭通常是 "EAA")
+    print(f"token 長度={len(token)}, 開頭={token[:6]!r}", file=sys.stderr)
+    if token.startswith("{") or token.startswith('"'):
+        print(
+            "警告:token 開頭是 '{' 或 '\"',看起來像是整包 JSON 或帶了引號被貼進來了,"
+            "應該只存 access_token 欄位的純字串值。",
+            file=sys.stderr,
+        )
 
     print(f"建立 media container,image_url={args.image_url}")
     creation_id = create_media_container(ig_user_id, token, args.image_url, args.caption)
