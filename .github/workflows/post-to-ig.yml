@@ -1,12 +1,9 @@
 name: Post daily briefing to Instagram
 
 on:
-  # 正式排程:GitHub Actions 自己每天固定時間去讀信、拉資料(不再依賴 Claude session
-  # 對外呼叫)。00:05 UTC = 08:05 台北,晚於 Claude 排程任務讀信、寄信回自己信箱的
-  # 時間(01:00),確保信已經在信箱裡。
-  schedule:
-    - cron: "5 0 * * *"
-  # 保留:緊急補發/測試用,Claude 那邊如果哪天又要主動觸發還是可以用
+  # 正式排程:GitHub Actions 內建 schedule 延遲/跳過不可靠,改由外部 cron
+  # (cron-job.org)在 00:05 UTC = 08:05 台北準時打 repository_dispatch 觸發,
+  # 不帶 client_payload,此 workflow 收到後照樣走 Gmail fetch 抓當天的信。
   repository_dispatch:
     types: [post_briefing]
   # 方便手動測試:去 repo 的 Actions 頁籤按 "Run workflow"
@@ -37,7 +34,7 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Fetch payload from Gmail
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) == 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
         env:
           GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
@@ -48,7 +45,7 @@ jobs:
           cat payload.json
 
       - name: Write payload.json from manual/dispatch input
-        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) != 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}

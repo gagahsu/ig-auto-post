@@ -1,11 +1,9 @@
 name: Post closing summary to Instagram
 
 on:
-  # 正式排程:原始盤後信約 22:00 台北寄達(融資餘額要等 21:00 後才抓得到),
-  # 22:15 UTC+8 = 14:15 UTC,留 15 分鐘緩衝去讀那封信。
-  schedule:
-    - cron: "15 14 * * *"
-  # 保留:緊急補發/測試用
+  # 正式排程:GitHub Actions 內建 schedule 延遲/跳過不可靠,改由外部 cron
+  # (cron-job.org)在 14:15 UTC = 22:15 台北準時打 repository_dispatch 觸發,
+  # 不帶 client_payload,此 workflow 收到後照樣走 Gmail fetch 抓當天的信。
   repository_dispatch:
     types: [post_closing]
   # 方便手動測試:去 repo 的 Actions 頁籤按 "Run workflow"
@@ -36,7 +34,7 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Fetch payload from Gmail
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) == 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
         env:
           GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
@@ -47,7 +45,7 @@ jobs:
           cat payload.json
 
       - name: Write payload.json from manual/dispatch input
-        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) != 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
