@@ -1,9 +1,9 @@
 name: Post company intro card to Instagram
 
 on:
-  # 台北 11:30 = UTC 03:30。
-  schedule:
-    - cron: "30 3 * * *"
+  # 正式排程:GitHub Actions 內建 schedule 延遲/跳過不可靠,改由外部 cron
+  # (cron-job.org)在 03:30 UTC = 11:30 台北準時打 repository_dispatch 觸發,
+  # 不帶 client_payload,此 workflow 收到後照樣走 Gmail fetch 抓當天的信。
   repository_dispatch:
     types: [post_company]
   workflow_dispatch:
@@ -36,7 +36,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
 
       - name: Fetch payload from Gmail
-        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) == 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
         env:
           GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
@@ -47,7 +47,7 @@ jobs:
           cat deck.json
 
       - name: Write deck.json from manual/dispatch input
-        if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) != 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
         env:
           DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
           MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
