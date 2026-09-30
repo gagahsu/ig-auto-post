@@ -78,6 +78,7 @@ jobs:
           done
           git add assets/
           git commit -m "chore: add company intro IG card $(date +%Y-%m-%d)"
+          git pull --rebase
           git push
 
       - name: Resolve public URLs via jsDelivr and wait for CDN propagation
