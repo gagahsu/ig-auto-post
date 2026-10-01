@@ -1,0 +1,188 @@
+name: Post daily briefing Reel to Instagram
+
+on:
+  # 正式排程:跟圖卡一樣由 cron-job.org 打 repository_dispatch(event_type=post_reel),
+  # 不帶 client_payload,照樣去 Gmail 抓當天的 IG_BRIEFING_PAYLOAD 信。
+  repository_dispatch:
+    types: [post_reel]
+  workflow_dispatch:
+    inputs:
+      payload_json:
+        description: "測試用 payload(貼上完整 JSON 字串,留空則去讀信)"
+        required: false
+      publish:
+        description: "真的發到 IG(不勾只產生影片,可在 Artifacts 下載檢查)"
+        type: boolean
+        default: false
+      reels_ref:
+        description: "gagahsu/ig-auto-reels 要用的 branch/tag"
+        required: false
+        default: main
+
+permissions:
+  contents: write
+
+# 同時只跑一支,避免兩次執行同時 force-push reel-media branch
+concurrency:
+  group: post-reel
+  cancel-in-progress: false
+
+env:
+  # 影片放在只有一個 commit 的孤兒 branch,每次 force-push 覆蓋,不會讓 main 的歷史越長越大
+  MEDIA_BRANCH: reel-media
+  # IG 是自動發布、沒人工審核,文案固定加上這段警語
+  REEL_WARNING: "⚠️ 本影片由 AI 自動生成並自動發布，未經人工審核，數據與內容可能有誤，請以官方公告與即時行情為準。內容僅供參考，非投資建議。"
+
+jobs:
+  render-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout ig-auto-post
+        uses: actions/checkout@v4
+
+      - name: Checkout ig-auto-reels (renderer)
+        uses: actions/checkout@v4
+        with:
+          repository: gagahsu/ig-auto-reels
+          ref: ${{ github.event.inputs.reels_ref || 'main' }}
+          path: reels
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: reels/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-noto-cjk
+          pip install requests google-genai
+          cd reels
+          npm ci
+          npx remotion browser ensure
+
+      - name: Fetch payload from Gmail
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) == 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json == '')
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          GMAIL_SELF_ADDRESS: ${{ secrets.GMAIL_SELF_ADDRESS }}
+        run: |
+          python3 scripts/fetch_briefing_email.py --out payload.json
+          cat payload.json
+
+      - name: Write payload.json from manual/dispatch input
+        if: (github.event_name == 'repository_dispatch' && toJson(github.event.client_payload) != 'null') || (github.event_name == 'workflow_dispatch' && github.event.inputs.payload_json != '')
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          MANUAL_PAYLOAD: ${{ github.event.inputs.payload_json }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "$MANUAL_PAYLOAD" > payload.json
+          else
+            echo "$DISPATCH_PAYLOAD" > payload.json
+          fi
+          cat payload.json
+
+      - name: Resolve date
+        id: meta
+        run: |
+          DATE=$(python3 -c "import json;print(json.load(open('payload.json'))['date'].replace('.','-'))")
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+          echo "日期:$DATE"
+
+      - name: Build scenes
+        working-directory: reels
+        run: npx tsx scripts/export-scenes.ts ../payload.json build/${{ steps.meta.outputs.date }}/scenes.json
+
+      - name: Gemini TTS
+        working-directory: reels
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python3 scripts/gemini_tts.py build/${{ steps.meta.outputs.date }}/scenes.json
+
+      - name: Render reel
+        working-directory: reels
+        run: |
+          node render.mjs build/${{ steps.meta.outputs.date }}/props.json out/reel.mp4
+          SIZE=$(stat -c %s out/reel.mp4)
+          echo "影片大小:$((SIZE / 1024 / 1024)) MB"
+          # jsDelivr 不提供超過 20 MB 的 GitHub 檔案
+          if [ "$SIZE" -gt 20000000 ]; then
+            echo "::error::影片 $SIZE bytes 超過 jsDelivr 20 MB 上限"
+            exit 1
+          fi
+
+      - name: Upload reel as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-${{ steps.meta.outputs.date }}
+          path: |
+            reels/out/reel.mp4
+            reels/build/${{ steps.meta.outputs.date }}/scenes.json
+          retention-days: 14
+
+      - name: Push video to media branch and wait for jsDelivr
+        id: video_url
+        if: github.event_name == 'repository_dispatch' || github.event.inputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILE="reel-${{ steps.meta.outputs.date }}.mp4"
+          mkdir media && cp reels/out/reel.mp4 "media/$FILE"
+          cd media
+          git init -q -b "$MEDIA_BRANCH"
+          git config user.name "ig-auto-post-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add "$FILE"
+          git commit -q -m "chore: reel ${{ steps.meta.outputs.date }}"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "HEAD:$MEDIA_BRANCH"
+          SHA=$(git rev-parse HEAD)
+
+          # 用 commit SHA 而不是 branch 名稱組網址:內容固定,不必 purge 快取
+          URL="https://cdn.jsdelivr.net/gh/${{ github.repository }}@${SHA}/${FILE}"
+          for i in $(seq 1 24); do
+            STATUS=$(curl -sS -o /dev/null -r 0-1023 -w "%{http_code}" "$URL")
+            if [ "$STATUS" = "200" ] || [ "$STATUS" = "206" ]; then
+              echo "jsDelivr ready after $((i * 5))s: $URL"
+              echo "url=$URL" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "attempt $i: status $STATUS, retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::jsDelivr never returned 200 within 120s: $URL"
+          exit 1
+
+      - name: Build caption
+        if: steps.video_url.outputs.url != ''
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          caption = json.load(open("payload.json")).get("caption", "").rstrip()
+          open("caption.txt", "w", encoding="utf-8").write(f"{caption}\n\n{os.environ['REEL_WARNING']}")
+          EOF
+          cat caption.txt
+
+      - name: Publish reel to Instagram
+        if: steps.video_url.outputs.url != ''
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_BUSINESS_ACCOUNT_ID: ${{ secrets.IG_BUSINESS_ACCOUNT_ID }}
+          VIDEO_URL: ${{ steps.video_url.outputs.url }}
+        run: python3 scripts/publish_ig.py --video-url "$VIDEO_URL" --caption "$(cat caption.txt)"
+
+      - name: Remove media branch
+        if: success() && steps.video_url.outputs.url != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: git push -q "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" --delete "$MEDIA_BRANCH"
